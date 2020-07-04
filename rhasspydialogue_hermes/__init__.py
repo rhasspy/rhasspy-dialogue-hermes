@@ -34,7 +34,7 @@ from rhasspyhermes.dialogue import (
     DialogueSessionTerminationReason,
     DialogueStartSession,
 )
-from rhasspyhermes.nlu import NluIntent, NluIntentNotRecognized, NluQuery
+from rhasspyhermes.nlu import Intent, NluIntent, NluIntentParsed, NluIntentNotRecognized, NluQuery
 from rhasspyhermes.tts import TtsSay, TtsSayFinished
 from rhasspyhermes.wake import (
     HotwordDetected,
@@ -130,7 +130,7 @@ class DialogueHermesMqtt(HermesClient):
             DialogueEndSession,
             DialogueConfigure,
             TtsSayFinished,
-            NluIntent,
+            NluIntentParsed,
             NluIntentNotRecognized,
             AsrTextCaptured,
             HotwordDetected,
@@ -480,13 +480,51 @@ class DialogueHermesMqtt(HermesClient):
         except Exception:
             _LOGGER.exception("handle_text_captured")
 
-    async def handle_recognized(self, recognition: NluIntent) -> None:
+    async def handle_recognized(
+            self, recognition: NluIntentParsed
+    ) -> typing.AsyncIterable[
+        typing.Union[
+            typing.Tuple[NluIntent, TopicArgs],
+        ]
+    ]:
         """Intent successfully recognized."""
         try:
-            if self.session is None:
-                return
+            if self.session is not None:
+                if self.session.session_id != recognition.session_id:
+                    _LOGGER.warning("No matching session for %s", recognition.session_id)
+                    return
+                else:
+                    original_input = self.session.text_captured.text
+            else:
+                original_input = recognition.input
 
             _LOGGER.debug("Recognized %s", recognition)
+
+            # forward custom data if it's our session
+            if self.session is not None and self.session.session_id == recognition.session_id:
+                custom_data = self.session.custom_data
+            else:
+                custom_data = None
+
+            # intent
+            yield (
+                NluIntent(
+                    input=recognition.input,
+                    id=recognition.id,
+                    site_id=recognition.site_id,
+                    session_id=recognition.session_id,
+                    intent=Intent(
+                        intent_name=recognition.intent.intent_name,
+                        confidence_score=recognition.intent.confidence_score,
+                    ),
+                    slots=recognition.slots,
+                    asr_tokens=[NluIntent.make_asr_tokens(recognition.input.split())],
+                    raw_input=original_input,
+                    custom_data=custom_data,
+                ),
+                {"intent_name": recognition.intent.intent_name}
+            )
+
         except Exception:
             _LOGGER.exception("handle_recognized")
 
@@ -676,9 +714,10 @@ class DialogueHermesMqtt(HermesClient):
                     yield wake_result
             else:
                 _LOGGER.warning("Ignoring wake word id=%s", wakeword_id)
-        elif isinstance(message, NluIntent):
+        elif isinstance(message, NluIntentParsed):
             # Intent recognized
-            await self.handle_recognized(message)
+            async for recognized_result in self.handle_recognized(message):
+                yield recognized_result
         elif isinstance(message, NluIntentNotRecognized):
             # Intent not recognized
             async for play_error_result in self.maybe_play_sound(
