@@ -44,7 +44,7 @@ optional arguments:
   --session-timeout SESSION_TIMEOUT
                         Seconds before a dialogue session times out (default:
                         30)
-  --sound SOUND SOUND   Add WAV id/path
+  --sound SOUND SOUND   Add sound id/path (path being a WAV file or a directory containing WAV files) 
   --host HOST           MQTT host (default: localhost)
   --port PORT           MQTT port (default: 1883)
   --username USERNAME   MQTT username
